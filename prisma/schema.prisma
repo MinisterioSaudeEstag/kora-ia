@@ -1,0 +1,124 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// User Model
+model User {
+  id        String     @id @default(cuid())
+  name      String
+  email     String     @unique
+  passwordHash String
+  phone     String?
+  location  String?
+  avatar    String?
+  notification_preferences Json?
+  joinDate  DateTime   @default(now())
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  documents       Document[]
+  questions       Question[]
+  koraPreference  KoraPreference?
+
+  @@map("users")
+}
+
+// Document Model - for PDF uploads
+model Document {
+  id                      String   @id @default(cuid())
+  userId                  String
+  nome_arquivo            String
+  caminho_armazenamento   String
+  data_upload             DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions    Question[]
+  
+  // CORREÇÃO AQUI: Agora o documento tem vários pedaços (chunks) em vez de um conteúdo único
+  chunks       PdfChunk[] 
+
+  @@index([userId])
+  @@map("documents")
+}
+
+// Question/Answer Model - for chat history
+model Question {
+  id            String   @id @default(cuid())
+  userId        String
+  documentId    String
+  pergunta      String
+  resposta      String?
+  data_criacao  DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([documentId])
+  @@map("questions")
+}
+
+// PDF Chunk Model - Para RAG (Vector Search)
+model PdfChunk {
+  id         String                    @id @default(cuid())
+  documentId String
+  content    String                    @db.Text
+  embedding  Unsupported("vector(1536)")? // Vetor para OpenAI (1536 dimensões)
+  
+  // Relation correta com Document
+  document   Document                  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("pdf_chunks")
+}
+
+// Kora Template - Response templates for standardized outputs
+model KoraTemplate {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String   // e.g., "Análise Financeira", "Relatório Executivo"
+  description String?
+  systemPrompt String  // Template instruction for Kora
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  preferences KoraPreference[]
+
+  @@index([userId])
+  @@map("kora_templates")
+}
+
+// Kora Preference - User preferences for Kora AI
+model KoraPreference {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  templateId      String?
+  aiModel         String   @default("gpt-4-turbo")
+  language        String   @default("pt-BR")
+  responseStyle   String   @default("formal")
+  maxTokens       Int      @default(500)
+  temperature     Float    @default(0.7)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template KoraTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@map("kora_preferences")
+}
