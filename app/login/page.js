@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -11,7 +13,9 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-    const validateForm = () => {
+  const router = useRouter();
+
+  const validateForm = () => {
     if (!email || !password) {
       setError('Por favor, preencha todos os campos');
       return false;
@@ -23,13 +27,15 @@ export default function Login() {
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setError('Email inválido');
+      setError('E-mail inválido');
       return false;
     }
+
     if (password.length < 6) {
-      setError('Senha deve ter no mínimo 6 caracteres');
+      setError('A senha deve ter no mínimo 6 caracteres');
       return false;
     }
+
     return true;
   };
 
@@ -42,36 +48,33 @@ export default function Login() {
     }
 
     setIsLoading(true);
+
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email,
-          password,
-          rememberMe,
-        }),
+      const { data, error: supabaseError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      if (!response.ok) {
-        throw new Error('Email ou senha incorretos');
+      if (supabaseError) {
+        if (supabaseError.message.includes('Invalid login credentials')) {
+          setError('E-mail ou senha incorretos.');
+        } else if (supabaseError.message.includes('Email not confirmed')) {
+          setError('E-mail ainda não confirmado. Verifique sua caixa de entrada.');
+        } else {
+          setError(supabaseError.message);
+        }
+        return;
       }
-
-      const data = await response.json();
-
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user_data', JSON.stringify(data.user));
 
       if (rememberMe) {
         localStorage.setItem('remember_me', 'true');
-        localStorage.setItem('auth_token_expiry', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString());
       }
 
-      window.location.href = '/';
-    } catch (error) {
-      setError(error.message || 'Erro ao fazer login. Tente novamente.');
+      router.push('/');
+      router.refresh();
+
+    } catch (err) {
+      setError('Ocorreu um erro inesperado ao conectar ao servidor.');
     } finally {
       setIsLoading(false);
     }
@@ -104,8 +107,8 @@ export default function Login() {
           <div className="space-y-6">
             {[
               { title: "Segurança de Dados", desc: "Armazenamento criptografado e seguro", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
-              { title: "Análise de Precisão", desc: "Extração de dados via modelos de linguagem", icon: "M13 10VC13 10 14.5 7 16 7s3 3 3 5v4a2 2 0 01-2 2H5a2 2 0 01-2-2V10a2 2 0 012-2h12a2 2 0 012 2z" },
-              { title: "Acesso Institucional", desc: "Integrado ao ecossistema do Governo Federal", icon: "M12 11c-1.1 0-2 .9-2 2s1 2 2 2 2-.9 2-2-.9-2-2-2zM12 15c-1.1 0-2 .9-2 2s1 2 2 2 2-.9 2-2-.9-2-2-2z" },
+              { title: "Análise de Precisão", desc: "Extração de dados via modelos de linguagem", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
+              { title: "Acesso Institucional", desc: "Integrado ao ecossistema do Governo Federal", icon: "M12 11c-1.1 0-2 .9-2 2s1 2 2 2 2-.9 2-2-.9-2-2-2z" },
             ].map((item, idx) => (
               <div key={idx} className="flex items-center gap-4 group">
                 <div className="w-10 h-10 bg-blue-800/50 rounded-lg flex items-center justify-center text-blue-200 group-hover:bg-blue-700 transition-colors">

@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -14,6 +16,8 @@ export default function Register() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  const router = useRouter();
 
   const validateForm = () => {
     const { name, email, password, confirmPassword } = formData;
@@ -79,39 +83,50 @@ export default function Register() {
     }
 
     setIsLoading(true);
+
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const { data, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            full_name: formData.name,
+          },
         },
-        body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password,
-          confirmPassword: formData.confirmPassword,
-        }),
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Erro ao processar o cadastro');
+      if (authError) {
+        if (authError.message.includes('User already registered')) {
+          throw new Error('Este e-mail já está cadastrado no sistema.');
+        }
+        throw new Error(authError.message);
       }
 
-      const data = await response.json();
+      if (data?.user) {
+        const { error: profileError } = await supabase.from('profiles').insert([
+          {
+            id: data.user.id,
+            full_name: formData.name,
+            email: formData.email,
+            role: 'employee',
+          },
+        ]);
 
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user_data', JSON.stringify(data.user));
+        if (profileError) {
+          console.error('Erro ao registrar perfil:', profileError.message);
+        }
+      }
 
       setSuccess(true);
       setFormData({ name: '', email: '', password: '', confirmPassword: '' });
 
       setTimeout(() => {
-        window.location.href = '/';
-      }, 2000);
-    } catch (error) {
-      setError(error.message || 'Erro ao criar conta. Tente novamente.');
-      console.error('Erro ao registrar:', error);
+        router.push('/login');
+      }, 2500);
+
+    } catch (err) {
+      setError(err.message || 'Erro ao criar conta. Tente novamente.');
+      console.error('Erro ao registrar:', err);
     } finally {
       setIsLoading(false);
     }
@@ -129,7 +144,7 @@ export default function Register() {
             </div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Cadastro Realizado</h2>
             <p className="text-gray-600 dark:text-gray-400">
-              Sua conta institucional foi criada com sucesso. Redirecionando para a página inicial...
+              Sua conta institucional foi criada com sucesso. Verifique seu e-mail para confirmação se necessário. Redirecionando para a página de login...
             </p>
           </div>
         </div>
@@ -164,8 +179,8 @@ export default function Register() {
           <div className="space-y-6">
             {[
               { title: "Selo de Segurança", desc: "Proteção de dados conforme a LGPD", icon: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" },
-              { title: "Análise Técnica", desc: "Processamento de documentos oficiais", icon: "M13 10V13 10 14.5 7 16 7s3 3 3 5v4a2 2 0 01-2 2H5a2 2 0 01-2-2V10a2 2 0 012-2h12a2 2 0 012 2z" },
-              { title: "Acesso Restrito", desc: "Exclusivo para servidores e colaboradores", icon: "M12 11c-1.1 0-2 .9-2 2s1 2 2 2 2-.9 2-2-.9-2-2-2zM12 15c-1.1 0-2 .9-2 2s1 2 2 2 2-.9 2-2-.9-2-2-2z" },
+              { title: "Análise Técnica", desc: "Processamento de documentos oficiais", icon: "M13 10V3L4 14h7v7l9-11h-7z" },
+              { title: "Acesso Restrito", desc: "Exclusivo para servidores e colaboradores", icon: "M12 11c-1.1 0-2 .9-2 2s1 2 2 2 2-.9 2-2-.9-2-2-2z" },
             ].map((item, idx) => (
               <div key={idx} className="flex items-center gap-4 group">
                 <div className="w-10 h-10 bg-blue-800/50 rounded-lg flex items-center justify-center text-blue-200 group-hover:bg-blue-700 transition-colors">
@@ -207,7 +222,7 @@ export default function Register() {
             {error && (
               <div className="p-3 bg-red-50 dark:bg-red-900/20 border-l-4 border-red-600 rounded text-red-700 dark:text-red-400 text-sm flex gap-3 animate-in fade-in slide-in-from-top-2">
                 <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-7 9a1 1 0 00-1.414 1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                 </svg>
                 <span>{error}</span>
               </div>
