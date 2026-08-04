@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../../app/lib/supabaseClient';
 
 export default function Register() {
   const [formData, setFormData] = useState({
