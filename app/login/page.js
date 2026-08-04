@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../../lib/supaBaseClient';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -63,6 +63,7 @@ export default function Login() {
         } else {
           setError(supabaseError.message);
         }
+        setIsLoading(false);
         return;
       }
 
@@ -71,11 +72,9 @@ export default function Login() {
       }
 
       router.push('/');
-      router.refresh();
 
     } catch (err) {
       setError('Ocorreu um erro inesperado ao conectar ao servidor.');
-    } finally {
       setIsLoading(false);
     }
   };
