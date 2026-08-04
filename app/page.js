@@ -7,6 +7,7 @@ import Footer from './components/Footer';
 import React from 'react';
 import dynamic from 'next/dynamic';
 import { FileText, MessageSquare, HardDrive, Upload, Clock, CheckCircle2 } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
 
 const PDFUpload = dynamic(() => import('./components/PDFUpload'), { 
   ssr: false 
@@ -20,34 +21,40 @@ export default function Home() {
   const [pdfs, setPdfs] = useState([]);
 
   useEffect(() => {
-    const authToken = localStorage.getItem('auth_token');
-    if (!authToken) {
-      router.replace('/login');
-      return;
-    }
+    const checkAuthAndLoadData = async () => {
+      // 1. Verifica se há uma sessão ativa no Supabase
+      const { data: { session } } = await supabase.auth.getSession();
 
-    const userData = localStorage.getItem('user_data');
-    try {
-      if (userData) {
-        const user = JSON.parse(userData);
-        setUserName(user.name || 'Usuário');
-        setUserProfile(user);
+      if (!session) {
+        router.replace('/login');
+        return;
       }
-    } catch (error) {
-      console.error('Erro ao carregar dados do usuário:', error);
-    }
 
-    const uploadedPdfs = localStorage.getItem('uploaded_pdfs');
-    if (uploadedPdfs) {
-      try {
-        const pdfList = JSON.parse(uploadedPdfs);
-        setPdfs(pdfList);
-      } catch (error) {
-        console.error('Erro ao carregar PDFs:', error);
+      // 2. Extrai dados do usuário logado
+      const user = session.user;
+      const displayName = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Usuário';
+      
+      setUserName(displayName);
+      setUserProfile({
+        name: displayName,
+        email: user.email
+      });
+
+      // 3. Carrega PDFs salvos no localStorage
+      const uploadedPdfs = localStorage.getItem('uploaded_pdfs');
+      if (uploadedPdfs) {
+        try {
+          const pdfList = JSON.parse(uploadedPdfs);
+          setPdfs(pdfList);
+        } catch (error) {
+          console.error('Erro ao carregar PDFs:', error);
+        }
       }
-    }
 
-    setIsLoading(false);
+      setIsLoading(false);
+    };
+
+    checkAuthAndLoadData();
   }, [router]);
 
   const handleSelectPdfAndNavigate = (pdf) => {
