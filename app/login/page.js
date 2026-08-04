@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '../../lib/supaBaseClient';
+import { supabase } from '../../app/lib/supabaseClient';
 
 export default function Login() {
   const [email, setEmail] = useState('');
