@@ -7,7 +7,7 @@ import Footer from './components/Footer';
 import React from 'react';
 import dynamic from 'next/dynamic';
 import { FileText, MessageSquare, HardDrive, Upload, Clock, CheckCircle2 } from 'lucide-react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../app/lib/supabaseClient';
 
 const PDFUpload = dynamic(() => import('./components/PDFUpload'), { 
   ssr: false 
