@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { supabase } from '@/lib/supabaseClient';
 import { 
   CheckCircle, 
   AlertCircle, 
@@ -17,11 +19,12 @@ import {
 } from 'lucide-react';
 
 export default function Profile() {
+  const router = useRouter();
   const [user, setUser] = useState(null);
   const [formData, setFormData] = useState({
     name: '', email: '', phone: '', location: '',
   });
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [error, setError] = useState('');
@@ -33,10 +36,16 @@ export default function Profile() {
     const loadUserData = async () => {
       setIsLoading(true);
       try {
-        const token = localStorage.getItem('auth_token');
-        if (!token) { window.location.href = '/login'; return; }
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!session) { 
+          router.replace('/login'); 
+          return; 
+        }
 
-        const response = await fetch('/api/user/avatar', {
+        const token = session.access_token;
+
+        const response = await fetch('/api/user/profile', {
           headers: { 'Authorization': `Bearer ${token}` },
         });
 
@@ -52,27 +61,44 @@ export default function Profile() {
           phone: profileUser.phone || '',
           location: profileUser.location || '',
         });
+
         localStorage.setItem('user_data', JSON.stringify(profileUser));
-      } catch (error) {
+        window.dispatchEvent(new Event('profileUpdated'));
+
+      } catch (err) {
+        console.error(err);
         setError('Erro ao carregar dados do perfil');
       } finally {
         setIsLoading(false);
       }
     };
+
     loadUserData();
-  }, []);
+  }, [router]);
 
   const handleSave = async (e) => {
     e.preventDefault();
-    setError(''); setSuccess('');
-    if (!formData.name.trim()) { setError('Nome é obrigatório'); return; }
+    setError(''); 
+    setSuccess('');
+
+    if (!formData.name.trim()) { 
+      setError('Nome é obrigatório'); 
+      return; 
+    }
 
     setIsSaving(true);
     try {
-      const token = localStorage.getItem('auth_token');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) throw new Error('Sessão expirada. Faça login novamente.');
+
       const response = await fetch('/api/user/profile', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${token}` 
+        },
         body: JSON.stringify({
           name: formData.name,
           phone: formData.phone,
@@ -91,9 +117,10 @@ export default function Profile() {
       setIsEditing(false);
       
       window.dispatchEvent(new Event('profileUpdated'));
+
       setTimeout(() => setSuccess(''), 3000);
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setIsSaving(false);
     }
@@ -109,7 +136,11 @@ export default function Profile() {
 
     setIsUploadingAvatar(true);
     try {
-      const token = localStorage.getItem('auth_token');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) throw new Error('Sessão expirada');
+
       const formDataToSend = new FormData();
       formDataToSend.append('file', file);
 
@@ -123,20 +154,21 @@ export default function Profile() {
 
       const data = await response.json();
       const updatedUser = { ...user, avatar: data.avatarUrl };
+      
       setUser(updatedUser);
       localStorage.setItem('user_data', JSON.stringify(updatedUser));
       
       window.dispatchEvent(new Event('profileUpdated'));
       setSuccess('Foto atualizada!');
       setTimeout(() => setSuccess(''), 3000);
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setIsUploadingAvatar(false);
     }
   };
 
-  if (isLoading || !user) {
+  if (isLoading) {
     return (
       <div className="flex flex-col min-h-screen bg-[#FAF8F5] text-stone-800">
         <Header />
@@ -156,7 +188,6 @@ export default function Profile() {
       <Header />
 
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
-        {/* Cabeçalho da Página */}
         <div className="mb-8">
           <div className="flex items-center gap-2 mb-1">
             <div className="p-2 bg-blue-50 text-[#004a94] rounded-xl border border-blue-100">
@@ -172,7 +203,6 @@ export default function Profile() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Card do Perfil / Foto */}
           <div className="lg:col-span-1">
             <div className="bg-white border border-stone-200/80 rounded-2xl p-6 text-center shadow-sm">
               <div className="relative w-32 h-32 mx-auto mb-5 group">
@@ -225,7 +255,6 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Form / Detalhes do Usuário */}
           <div className="lg:col-span-2">
             {error && (
               <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs sm:text-sm flex items-center gap-3">
@@ -242,7 +271,6 @@ export default function Profile() {
 
             <form onSubmit={handleSave} className="bg-white border border-stone-200/80 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
               <div className="grid grid-cols-1 gap-5">
-                {/* Nome */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-2 flex items-center gap-1.5">
                     <User className="w-3.5 h-3.5 text-stone-400" />
@@ -258,7 +286,6 @@ export default function Profile() {
                   />
                 </div>
 
-                {/* E-mail */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-2 flex items-center gap-1.5">
                     <Mail className="w-3.5 h-3.5 text-stone-400" />
@@ -274,7 +301,6 @@ export default function Profile() {
                   <p className="text-[11px] text-stone-400 mt-1">O e-mail institucional não pode ser alterado diretamente.</p>
                 </div>
 
-                {/* Telefone e Localização */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-wider text-stone-600 mb-2 flex items-center gap-1.5">
@@ -310,7 +336,6 @@ export default function Profile() {
                 </div>
               </div>
 
-              {/* Botões de Ação ao Editar */}
               {isEditing && (
                 <div className="flex gap-3 pt-6 border-t border-stone-100">
                   <button

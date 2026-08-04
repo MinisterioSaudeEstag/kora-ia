@@ -1,20 +1,78 @@
-import { verifyToken, updateUser, getUserByEmail } from '@/app/lib/auth-utils-prisma';
+import { createClient } from '@supabase/supabase-js';
 import prisma from '@/app/lib/prisma';
 
-export async function PUT(request) {
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+async function getAuthenticatedUser(request) {
+  const authHeader = request.headers.get('authorization');
+  if (!authHeader?.startsWith('Bearer ')) return null;
+
+  const token = authHeader.slice(7);
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+
+  if (error || !user) return null;
+  return user;
+}
+
+export async function GET(request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
+    const supabaseUser = await getAuthenticatedUser(request);
+
+    if (!supabaseUser) {
       return Response.json(
-        { error: 'Token não fornecido' },
+        { error: 'Token inválido ou expirado' },
         { status: 401 }
       );
     }
 
-    const token = authHeader.slice(7);
-    const decoded = verifyToken(token);
-    
-    if (!decoded) {
+    let user = await prisma.user.findFirst({
+      where: { email: supabaseUser.email },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        location: true,
+        avatar: true,
+        joinDate: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!user) {
+      user = {
+        id: supabaseUser.id,
+        name: supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0],
+        email: supabaseUser.email,
+        phone: '',
+        location: '',
+        avatar: '',
+        joinDate: supabaseUser.created_at,
+        updatedAt: supabaseUser.updated_at,
+      };
+    }
+
+    return Response.json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error('Erro ao recuperar perfil:', error);
+    return Response.json(
+      { error: 'Erro ao recuperar perfil' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request) {
+  try {
+    const supabaseUser = await getAuthenticatedUser(request);
+
+    if (!supabaseUser) {
       return Response.json(
         { error: 'Token inválido ou expirado' },
         { status: 401 }
@@ -43,7 +101,15 @@ export async function PUT(request) {
     if (location) updateData.location = location;
     if (avatar) updateData.avatar = avatar;
 
-    const updatedUser = await updateUser(decoded.userId, updateData);
+    const updatedUser = await prisma.user.upsert({
+      where: { email: supabaseUser.email },
+      update: updateData,
+      create: {
+        email: supabaseUser.email,
+        name: name || supabaseUser.email.split('@')[0],
+        ...updateData,
+      },
+    });
 
     return Response.json({
       success: true,
@@ -63,60 +129,6 @@ export async function PUT(request) {
     console.error('Erro ao atualizar perfil:', error);
     return Response.json(
       { error: 'Erro ao atualizar perfil' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function GET(request) {
-  try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return Response.json(
-        { error: 'Token não fornecido' },
-        { status: 401 }
-      );
-    }
-
-    const token = authHeader.slice(7);
-    const decoded = verifyToken(token);
-    
-    if (!decoded) {
-      return Response.json(
-        { error: 'Token inválido ou expirado' },
-        { status: 401 }
-      );
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        location: true,
-        avatar: true,
-        joinDate: true,
-        updatedAt: true,
-      },
-    });
-
-    if (!user) {
-      return Response.json(
-        { error: 'Usuário não encontrado' },
-        { status: 404 }
-      );
-    }
-
-    return Response.json({
-      success: true,
-      user,
-    });
-  } catch (error) {
-    console.error('Erro ao recuperar perfil:', error);
-    return Response.json(
-      { error: 'Erro ao recuperar perfil' },
       { status: 500 }
     );
   }
