@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import prisma from '@/app/lib/prisma';
+import prisma from '../../../lib/prisma';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,

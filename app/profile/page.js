@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '../../app/lib/supabaseClient';
 import { 
   CheckCircle, 
   AlertCircle, 
