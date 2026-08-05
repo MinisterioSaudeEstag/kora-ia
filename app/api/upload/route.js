@@ -1,11 +1,15 @@
-import { verifyToken } from '@/app/lib/auth-utils-prisma';
+import { createClient } from '@supabase/supabase-js';
 import prisma from '@/app/lib/prisma';
 import OpenAI from 'openai';
 import axios from 'axios';
 import AdmZip from 'adm-zip';
 
-// IMPORTAÇÃO CORRIGIDA PARA PDF-PARSE (CommonJS)
-const pdfParse = require('pdf-parse'); 
+const pdfParse = require('pdf-parse');
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -26,19 +30,29 @@ function createChunks(text, size = 1000) {
 
 export async function POST(request) {
   try {
-    // 1. AUTENTICAÇÃO
     const authHeader = request.headers.get('authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return Response.json({ error: 'Token não fornecido' }, { status: 401 });
     }
 
     const token = authHeader.slice(7);
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return Response.json({ error: 'Token inválido ou expirado' }, { status: 401 });
+    const { data: { user: supabaseUser }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !supabaseUser) {
+      console.error('Erro na validação do token Supabase:', authError);
+      return Response.json({ error: 'Sessão expirada ou token inválido' }, { status: 401 });
     }
 
-    // 2. RECEBIMENTO DO ARQUIVO
+    let userId = supabaseUser.id;
+    if (supabaseUser.email) {
+      const dbUser = await prisma.user.findFirst({
+        where: { email: supabaseUser.email },
+      });
+      if (dbUser) {
+        userId = dbUser.id;
+      }
+    }
+
     const formData = await request.formData();
     const file = formData.get('file');
 
@@ -54,16 +68,14 @@ export async function POST(request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 3. SALVAR DOCUMENTO
     const document = await prisma.document.create({
       data: {
-        userId: decoded.userId,
+        userId: userId,
         nome_arquivo: file.name,
         caminho_armazenamento: `/uploads/documents/${Date.now()}_${file.name}`,
       },
     });
 
-    // 4. EXTRAÇÃO DE TEXTO (DIGITAL)
     let digitalText = "";
     try {
       const pdfData = await pdfParse(buffer);
@@ -75,7 +87,6 @@ export async function POST(request) {
       console.warn("⚠️ Falha na extração digital, tentando OCR visual...");
     }
 
-    // 5. FALLBACK OCR VISUAL
     let combinedPageContent = "";
     const validBase64Images = [];
     
@@ -102,12 +113,10 @@ export async function POST(request) {
           
           if (Array.isArray(jsonData.PngResultPages)) {
             for (const page of jsonData.PngResultPages) {
-              // CASO A: A API enviou o Base64 direto (ImageData)
               if (page.ImageData) {
                 validBase64Images.push(page.ImageData);
                 console.log(`📸 Página ${page.PageNumber} capturada via Base64`);
               } 
-              // CASO B: A API enviou um link para a imagem (URL) -> Precisamos baixar!
               else if (page.URL) {
                 try {
                   console.log(`📥 Baixando imagem da página ${page.PageNumber} via URL...`);
@@ -177,7 +186,6 @@ export async function POST(request) {
 
     console.log("📄 CONTEÚDO FINAL PARA INDEXAÇÃO:", combinedPageContent);
 
-    // 6. GERAÇÃO DE EMBEDDINGS COM CHUNKING
     try {
       const chunks = createChunks(combinedPageContent);
       for (const chunkText of chunks) {

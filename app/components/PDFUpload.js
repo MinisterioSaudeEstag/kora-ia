@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, X } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient'; 
 
 export default function PDFUpload({ onUploadComplete }) {
   const [isDragging, setIsDragging] = useState(false);
@@ -58,8 +59,13 @@ export default function PDFUpload({ onUploadComplete }) {
     setError(null);
 
     try {
-      const token = localStorage.getItem('auth_token');
-      if (!token) throw new Error('Sessão expirada. Por favor, faça login novamente.');
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error('Sessão expirada. Por favor, faça login novamente.');
+      }
+
+      const token = session.access_token;
 
       const formData = new FormData();
       formData.append('file', file);
@@ -76,7 +82,7 @@ export default function PDFUpload({ onUploadComplete }) {
 
       setProgress(80);
 
-      const documentId = data.document.id;
+      const documentId = data.document?.id || data.id;
 
       const newPDF = {
         id: documentId,
@@ -110,7 +116,6 @@ export default function PDFUpload({ onUploadComplete }) {
           {!success ? (
             <div className="space-y-4">
               
-              {/* ÁREA DE DRAG & DROP */}
               <div
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -168,7 +173,6 @@ export default function PDFUpload({ onUploadComplete }) {
                 )}
               </div>
 
-              {/* ALERTA DE ERRO */}
               {error && (
                 <div className="flex items-center gap-2.5 text-red-700 text-xs bg-red-50 border border-red-200 p-3 rounded-xl font-medium">
                   <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
@@ -176,7 +180,6 @@ export default function PDFUpload({ onUploadComplete }) {
                 </div>
               )}
 
-              {/* BARRA DE PROGRESSO */}
               {uploading && (
                 <div className="space-y-2 bg-stone-50 p-4 rounded-xl border border-stone-200/80">
                   <div className="w-full bg-stone-200 rounded-full h-2 overflow-hidden">
@@ -191,7 +194,6 @@ export default function PDFUpload({ onUploadComplete }) {
                 </div>
               )}
 
-              {/* BOTÃO DE ENVIAR */}
               <button
                 onClick={handleUpload}
                 disabled={!file || uploading}
