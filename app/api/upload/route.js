@@ -4,14 +4,14 @@ import OpenAI from 'openai';
 import axios from 'axios';
 import AdmZip from 'adm-zip';
 
-const pdfParse = require('pdf-parse');
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 );
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'fake-key' });
 
 function isValidImageBuffer(buffer) {
   if (!buffer || buffer.length < 4) return false;
@@ -60,7 +60,7 @@ export async function POST(request) {
           },
         });
       } catch (userCreateErr) {
-        console.warn('Aviso: Não foi possível criar usuário automático no Prisma:', userCreateErr.message);
+        console.warn('Aviso ao sincronizar usuário no Prisma:', userCreateErr.message);
       }
     }
 
@@ -97,50 +97,48 @@ export async function POST(request) {
         console.log(`✅ Texto digital extraído: ${digitalText.length} caracteres`);
       }
     } catch (e) {
-      console.warn("⚠️ Falha na extração digital com pdf-parse:", e.message);
+      console.warn("⚠️ Falha na extração digital:", e.message);
     }
 
     let combinedPageContent = "";
     const validBase64Images = [];
 
-    if (!digitalText || digitalText.length < 100) {
+    if ((!digitalText || digitalText.length < 100) && process.env.CLOUDMERSIVE_API_KEY) {
       try {
-        if (process.env.CLOUDMERSIVE_API_KEY) {
-          console.log("🔄 Convertedores de PDF para Imagem via Cloudmersive...");
-          const cloudmersiveFormData = new FormData();
-          cloudmersiveFormData.append('inputFile', new Blob([buffer], { type: 'application/pdf' }), file.name);
+        console.log("🔄 Convertendo PDF para Imagem via Cloudmersive...");
+        const cloudmersiveFormData = new FormData();
+        cloudmersiveFormData.append('inputFile', new Blob([buffer], { type: 'application/pdf' }), file.name);
 
-          const convertRes = await axios.post(
-            'https://api.cloudmersive.com/convert/pdf/to/png',
-            cloudmersiveFormData,
-            {
-              headers: { 'Apikey': process.env.CLOUDMERSIVE_API_KEY },
-              responseType: 'arraybuffer'
-            }
-          );
-
-          const responseBuffer = Buffer.from(convertRes.data);
-          const responseString = responseBuffer.toString('utf-8');
-
-          if (responseString.trim().startsWith('{')) {
-            const jsonData = JSON.parse(responseString);
-            if (Array.isArray(jsonData.PngResultPages)) {
-              for (const page of jsonData.PngResultPages) {
-                if (page.ImageData) validBase64Images.push(page.ImageData);
-              }
-            } else if (jsonData.Content) {
-              validBase64Images.push(jsonData.Content);
-            }
-          } else if (responseBuffer[0] === 0x50 && responseBuffer[1] === 0x4B) {
-            const zip = new AdmZip(responseBuffer);
-            zip.getEntries().forEach(entry => {
-              if (entry.entryName.toLowerCase().endsWith('.png')) {
-                validBase64Images.push(entry.getData().toString('base64'));
-              }
-            });
-          } else if (isValidImageBuffer(responseBuffer)) {
-            validBase64Images.push(responseBuffer.toString('base64'));
+        const convertRes = await axios.post(
+          'https://api.cloudmersive.com/convert/pdf/to/png',
+          cloudmersiveFormData,
+          {
+            headers: { 'Apikey': process.env.CLOUDMERSIVE_API_KEY },
+            responseType: 'arraybuffer'
           }
+        );
+
+        const responseBuffer = Buffer.from(convertRes.data);
+        const responseString = responseBuffer.toString('utf-8');
+
+        if (responseString.trim().startsWith('{')) {
+          const jsonData = JSON.parse(responseString);
+          if (Array.isArray(jsonData.PngResultPages)) {
+            for (const page of jsonData.PngResultPages) {
+              if (page.ImageData) validBase64Images.push(page.ImageData);
+            }
+          } else if (jsonData.Content) {
+            validBase64Images.push(jsonData.Content);
+          }
+        } else if (responseBuffer[0] === 0x50 && responseBuffer[1] === 0x4B) {
+          const zip = new AdmZip(responseBuffer);
+          zip.getEntries().forEach(entry => {
+            if (entry.entryName.toLowerCase().endsWith('.png')) {
+              validBase64Images.push(entry.getData().toString('base64'));
+            }
+          });
+        } else if (isValidImageBuffer(responseBuffer)) {
+          validBase64Images.push(responseBuffer.toString('base64'));
         }
       } catch (e) {
         console.error("❌ Erro no processamento Cloudmersive:", e.message);
@@ -207,10 +205,7 @@ export async function POST(request) {
   } catch (error) {
     console.error('❌ Erro Geral no Upload:', error);
     return Response.json(
-      { 
-        error: 'Erro interno no servidor ao processar o upload.', 
-        details: error.message || 'Erro desconhecido' 
-      }, 
+      { error: 'Erro interno no servidor', details: error.message || String(error) },
       { status: 500 }
     );
   }
