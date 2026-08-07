@@ -3,8 +3,7 @@ import prisma from '@/app/lib/prisma';
 import OpenAI from 'openai';
 import axios from 'axios';
 import AdmZip from 'adm-zip';
-
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import { extractText } from 'unpdf';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
@@ -91,13 +90,17 @@ export async function POST(request) {
 
     let digitalText = "";
     try {
-      const pdfData = await pdfParse(buffer);
-      if (pdfData && pdfData.text && pdfData.text.trim().length > 0) {
-        digitalText = pdfData.text.trim();
-        console.log(`✅ Texto digital extraído: ${digitalText.length} caracteres`);
+      const { text } = await extractText(buffer);
+      
+      if (text && Array.isArray(text)) {
+        const fullText = text.join('\n').trim();
+        if (fullText.length > 0) {
+          digitalText = fullText;
+          console.log(`✅ Texto digital extraído com unpdf: ${digitalText.length} caracteres`);
+        }
       }
     } catch (e) {
-      console.warn("⚠️ Falha na extração digital:", e.message);
+      console.warn("⚠️ Falha na extração digital com unpdf:", e.message);
     }
 
     let combinedPageContent = "";
