@@ -54,18 +54,19 @@ export async function POST(request) {
     }
 
     if (!dbUser) {
-      try {
-        dbUser = await prisma.user.create({
-          data: {
-            id: supabaseUser.id,
-            email: supabaseUser.email || `user_${supabaseUser.id}@example.com`,
-            name: supabaseUser.user_metadata?.name || 'Usuário',
-          },
-        });
-      } catch (userCreateErr) {
-        console.warn('⚠️ Aviso ao criar usuário no Prisma:', userCreateErr.message);
-      }
-    }
+  try {
+    dbUser = await prisma.user.create({
+      data: {
+        id: supabaseUser.id,
+        email: supabaseUser.email || `user_${supabaseUser.id}@example.com`,
+        name: supabaseUser.user_metadata?.name || 'Usuário',
+        passwordHash: 'SUPABASE_EXTERNAL_AUTH', 
+      },
+    });
+  } catch (userCreateErr) {
+    console.warn('⚠️ Aviso ao criar usuário no Prisma:', userCreateErr.message);
+  }
+}
 
     const userIdToUse = dbUser ? dbUser.id : supabaseUser.id;
 
