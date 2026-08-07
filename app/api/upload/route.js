@@ -6,7 +6,6 @@ import PDFParser from 'pdf2json';
 import axios from 'axios';
 import FormData from 'form-data';
 
-// 1. Inicialização dos Clientes
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -17,7 +16,6 @@ export async function POST(req) {
   try {
     console.log('📥 [UPLOAD] Recebendo requisição...');
 
-    // 2. Validação da Sessão
     const authHeader = req.headers.get('authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return NextResponse.json({ error: 'Token não fornecido' }, { status: 401 });
@@ -30,7 +28,6 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
     }
 
-    // 3. Obtenção do Arquivo
     const formDataReq = await req.formData();
     const file = formDataReq.get('file');
 
@@ -43,7 +40,6 @@ export async function POST(req) {
 
     let extractedText = '';
 
-    // 4. ESTRATÉGIA 1: Leitura de Texto Digital (pdf2json)
     console.log('📄 [PDF2JSON] Tentando extrair texto digital nativo...');
     try {
       extractedText = await new Promise((resolve, reject) => {
@@ -52,7 +48,7 @@ export async function POST(req) {
         pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
         pdfParser.on("pdfParser_dataReady", () => {
           let text = pdfParser.getRawTextContent();
-          // Limpeza de quebras de página do parser
+
           text = text.replace(/----------------Page \(\d+\) Break----------------/g, ' ');
           resolve(text.trim());
         });
@@ -63,13 +59,12 @@ export async function POST(req) {
       if (extractedText.length > 30) {
         console.log(`✅ [PDF2JSON] Sucesso! Texto digital extraído (${extractedText.length} caracteres)`);
       } else {
-        extractedText = ''; // Muito curto, vai para o OCR
+        extractedText = ''; 
       }
     } catch (err) {
       console.warn('⚠️ [PDF2JSON] O arquivo não possui texto nativo. Passando para OCR...');
     }
 
-    // 5. ESTRATÉGIA 2: OCR via OCR.space (Tratamento Rigoroso da Resposta)
     if (!extractedText) {
       console.log('🔍 [OCR.space] PDF de imagem detectado. Executando OCR...');
       
@@ -82,7 +77,7 @@ export async function POST(req) {
         form.append('language', 'por'); 
         form.append('isOverlayRequired', 'false');
         form.append('filetype', 'PDF');
-        form.append('scale', 'true'); // Melhora a precisão em PDFs digitalizados
+        form.append('scale', 'true'); 
 
         const apiKey = process.env.OCR_SPACE_API_KEY || 'helloworld';
 
@@ -94,7 +89,6 @@ export async function POST(req) {
           maxBodyLength: Infinity,
         });
 
-        // Verificação segura da estrutura de resposta do OCR.space
         if (
           ocrRes.data && 
           ocrRes.data.ParsedResults && 
@@ -108,7 +102,6 @@ export async function POST(req) {
           }
         }
 
-        // Caso o OCR retorne erro interno na estrutura JSON
         if (ocrRes.data && ocrRes.data.IsErroredOnProcessing === true) {
           console.error('⚠️ [OCR.space] Erro interno processando imagem:', ocrRes.data.ErrorMessage);
         }
@@ -118,7 +111,6 @@ export async function POST(req) {
       }
     }
 
-    // 6. Validação Final do Texto (Garante que nunca vai salvar lixo ou JSON bruto)
     if (!extractedText || extractedText.length < 15 || extractedText.startsWith('{')) {
       console.error('❌ [ERRO] O PDF é ilegível ou retornou formato inválido.');
       return NextResponse.json(
@@ -127,10 +119,8 @@ export async function POST(req) {
       );
     }
 
-    // Limpeza extra de caracteres duplicados ou excesso de quebras de linha que atrapalham o embedding
     extractedText = extractedText.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
 
-    // 7. Banco de Dados e Embeddings (OpenAI)
     const document = await prisma.document.create({
       data: {
         userId: supabaseUser.id,
@@ -150,7 +140,7 @@ export async function POST(req) {
     const chunk = await prisma.pdfChunk.create({
       data: {
         documentId: document.id,
-        content: extractedText, // Agora armazena estritamente a string de texto limpa
+        content: extractedText, 
       },
     });
 

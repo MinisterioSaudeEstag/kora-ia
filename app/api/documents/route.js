@@ -1,9 +1,27 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import prisma from '@/app/lib/prisma';
 import pdfParse from 'pdf-parse';
 import { createWorker } from 'tesseract.js';
 
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
 export async function POST(req) {
   try {
+    const authHeader = req.headers.get('authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Token não fornecido' }, { status: 401 });
+    }
+
+    const token = authHeader.slice(7);
+    const { data: { user: supabaseUser }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !supabaseUser) {
+      return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
+    }
+
     const formData = await req.formData();
     const file = formData.get('file');
 
@@ -14,11 +32,9 @@ export async function POST(req) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 1. Tenta extração de texto digital rápida via pdf-parse
     let pdfData = await pdfParse(buffer);
     let extractedText = pdfData.text ? pdfData.text.trim() : '';
 
-    // 2. Se o texto for muito curto ou vazio (PDF digitalizado/imagem), aplica OCR com Tesseract
     if (!extractedText || extractedText.length < 30) {
       console.log('⚠️ Texto digital não encontrado (PDF Imagem). Iniciando OCR...');
 
@@ -40,12 +56,24 @@ export async function POST(req) {
     return NextResponse.json({ success: true, document: documentData });
   } catch (error) {
     console.error('Erro no processamento do documento:', error);
-    return NextResponse.json({ error: 'Erro ao processar o arquivo PDF.' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Erro ao processar o arquivo PDF.' }, { status: 500 });
   }
 }
 
 export async function DELETE(req) {
   try {
+    const authHeader = req.headers.get('authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Token não fornecido' }, { status: 401 });
+    }
+
+    const token = authHeader.slice(7);
+    const { data: { user: supabaseUser }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !supabaseUser) {
+      return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 
@@ -53,8 +81,28 @@ export async function DELETE(req) {
       return NextResponse.json({ error: 'ID do documento não fornecido.' }, { status: 400 });
     }
 
+    const document = await prisma.document.findUnique({
+      where: { id },
+    });
+
+    if (!document || document.userId !== supabaseUser.id) {
+      return NextResponse.json({ error: 'Documento não encontrado ou permissão negada.' }, { status: 404 });
+    }
+
+    await prisma.pdfChunk.deleteMany({
+      where: { documentId: id },
+    });
+
+    await prisma.document.delete({
+      where: { id },
+    });
+
     return NextResponse.json({ success: true, message: 'Documento excluído com sucesso.' });
   } catch (error) {
-    return NextResponse.json({ error: 'Erro ao deletar documento.' }, { status: 500 });
+    console.error('❌ Erro ao deletar documento:', error);
+    return NextResponse.json(
+      { error: error.message || 'Erro interno ao deletar documento.' },
+      { status: 500 }
+    );
   }
 }
