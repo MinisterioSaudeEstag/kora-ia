@@ -1,229 +1,174 @@
+import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import prisma from '@/app/lib/prisma';
 import OpenAI from 'openai';
+import PDFParser from 'pdf2json';
 import axios from 'axios';
-import AdmZip from 'adm-zip';
-import { extractText } from 'unpdf';
+import FormData from 'form-data';
 
+// 1. Inicialização dos Clientes
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
-
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'fake-key' });
 
-function isValidImageBuffer(buffer) {
-  if (!buffer || buffer.length < 4) return false;
-  const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
-  const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-  return isPng || isJpeg;
-}
-
-function createChunks(text, size = 1000) {
-  const chunks = [];
-  for (let i = 0; i < text.length; i += size) {
-    chunks.push(text.substring(i, i + size));
-  }
-  return chunks;
-}
-
-export async function POST(request) {
+export async function POST(req) {
   try {
-    const authHeader = request.headers.get('authorization');
+    console.log('📥 [UPLOAD] Recebendo requisição...');
+
+    // 2. Validação da Sessão
+    const authHeader = req.headers.get('authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return Response.json({ error: 'Token não fornecido' }, { status: 401 });
+      return NextResponse.json({ error: 'Token não fornecido' }, { status: 401 });
     }
 
     const token = authHeader.slice(7);
     const { data: { user: supabaseUser }, error: authError } = await supabase.auth.getUser(token);
 
     if (authError || !supabaseUser) {
-      console.error('Erro na validação do token Supabase:', authError);
-      return Response.json({ error: 'Sessão expirada ou token inválido' }, { status: 401 });
+      return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
     }
 
-    let dbUser = null;
-    if (supabaseUser.email) {
-      try {
-        dbUser = await prisma.user.findFirst({
-          where: { email: supabaseUser.email },
-        });
-      } catch (e) {
-        console.warn('⚠️ Erro ao buscar usuário no Prisma:', e.message);
-      }
-    }
-
-    if (!dbUser) {
-  try {
-    dbUser = await prisma.user.create({
-      data: {
-        id: supabaseUser.id,
-        email: supabaseUser.email || `user_${supabaseUser.id}@example.com`,
-        name: supabaseUser.user_metadata?.name || 'Usuário',
-        passwordHash: 'SUPABASE_EXTERNAL_AUTH', 
-      },
-    });
-  } catch (userCreateErr) {
-    console.warn('⚠️ Aviso ao criar usuário no Prisma:', userCreateErr.message);
-  }
-}
-
-    const userIdToUse = dbUser ? dbUser.id : supabaseUser.id;
-
-    const formData = await request.formData();
-    const file = formData.get('file');
+    // 3. Obtenção do Arquivo
+    const formDataReq = await req.formData();
+    const file = formDataReq.get('file');
 
     if (!file || file.type !== 'application/pdf') {
-      return Response.json({ error: 'Apenas arquivos PDF são permitidos' }, { status: 400 });
-    }
-
-    const maxSize = 10 * 1024 * 1024; 
-    if (file.size > maxSize) {
-      return Response.json({ error: 'Arquivo muito grande. Máximo 10MB' }, { status: 400 });
+      return NextResponse.json({ error: 'Envie um arquivo PDF válido' }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer); 
-    const buffer = Buffer.from(arrayBuffer);
+    const fileBuffer = Buffer.from(arrayBuffer);
 
-    let document;
+    let extractedText = '';
+
+    // 4. ESTRATÉGIA 1: Leitura de Texto Digital (pdf2json)
+    console.log('📄 [PDF2JSON] Tentando extrair texto digital nativo...');
     try {
-      document = await prisma.document.create({
-        data: {
-          userId: userIdToUse,
-          nome_arquivo: file.name,
-          caminho_armazenamento: `/uploads/documents/${Date.now()}_${file.name}`,
-        },
+      extractedText = await new Promise((resolve, reject) => {
+        const pdfParser = new PDFParser(null, 1);
+        
+        pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
+        pdfParser.on("pdfParser_dataReady", () => {
+          let text = pdfParser.getRawTextContent();
+          // Limpeza de quebras de página do parser
+          text = text.replace(/----------------Page \(\d+\) Break----------------/g, ' ');
+          resolve(text.trim());
+        });
+        
+        pdfParser.parseBuffer(fileBuffer);
       });
-    } catch (docErr) {
-      console.error('❌ Erro ao criar registro de documento no Prisma:', docErr);
-      throw new Error(`Falha no banco de dados (Prisma/Document): ${docErr.message}`);
-    }
 
-    let digitalText = "";
-    try {
-      const { text } = await extractText(uint8Array);
-      if (text && Array.isArray(text)) {
-        const fullText = text.join('\n').trim();
-        if (fullText.length > 0) {
-          digitalText = fullText;
-          console.log(`✅ Texto digital extraído com unpdf: ${digitalText.length} caracteres`);
-        }
+      if (extractedText.length > 30) {
+        console.log(`✅ [PDF2JSON] Sucesso! Texto digital extraído (${extractedText.length} caracteres)`);
+      } else {
+        extractedText = ''; // Muito curto, vai para o OCR
       }
-    } catch (e) {
-      console.warn("⚠️ Falha na extração digital com unpdf:", e.message);
+    } catch (err) {
+      console.warn('⚠️ [PDF2JSON] O arquivo não possui texto nativo. Passando para OCR...');
     }
 
-    let combinedPageContent = "";
-    const validBase64Images = [];
-
-    if ((!digitalText || digitalText.length < 100) && process.env.CLOUDMERSIVE_API_KEY) {
+    // 5. ESTRATÉGIA 2: OCR via OCR.space (Tratamento Rigoroso da Resposta)
+    if (!extractedText) {
+      console.log('🔍 [OCR.space] PDF de imagem detectado. Executando OCR...');
+      
       try {
-        console.log("🔄 Convertendo PDF para Imagem via Cloudmersive...");
-        const cloudmersiveFormData = new FormData();
-        cloudmersiveFormData.append('inputFile', new Blob([buffer], { type: 'application/pdf' }), file.name);
+        const form = new FormData();
+        form.append('file', fileBuffer, {
+          filename: file.name || 'document.pdf',
+          contentType: 'application/pdf',
+        });
+        form.append('language', 'por'); 
+        form.append('isOverlayRequired', 'false');
+        form.append('filetype', 'PDF');
+        form.append('scale', 'true'); // Melhora a precisão em PDFs digitalizados
 
-        const convertRes = await axios.post(
-          'https://api.cloudmersive.com/convert/pdf/to/png',
-          cloudmersiveFormData,
-          {
-            headers: { 'Apikey': process.env.CLOUDMERSIVE_API_KEY },
-            responseType: 'arraybuffer'
-          }
-        );
+        const apiKey = process.env.OCR_SPACE_API_KEY || 'helloworld';
 
-        const responseBuffer = Buffer.from(convertRes.data);
-        const responseString = responseBuffer.toString('utf-8');
-
-        if (responseString.trim().startsWith('{')) {
-          const jsonData = JSON.parse(responseString);
-          if (Array.isArray(jsonData.PngResultPages)) {
-            for (const page of jsonData.PngResultPages) {
-              if (page.ImageData) validBase64Images.push(page.ImageData);
-            }
-          } else if (jsonData.Content) {
-            validBase64Images.push(jsonData.Content);
-          }
-        } else if (responseBuffer[0] === 0x50 && responseBuffer[1] === 0x4B) {
-          const zip = new AdmZip(responseBuffer);
-          zip.getEntries().forEach(entry => {
-            if (entry.entryName.toLowerCase().endsWith('.png')) {
-              validBase64Images.push(entry.getData().toString('base64'));
-            }
-          });
-        } else if (isValidImageBuffer(responseBuffer)) {
-          validBase64Images.push(responseBuffer.toString('base64'));
-        }
-      } catch (e) {
-        console.error("❌ Erro no processamento Cloudmersive:", e.message);
-      }
-    }
-
-    if (validBase64Images.length > 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'fake-key') {
-      try {
-        const contentArray = [{ type: "text", text: "Realize a leitura OCR completa. Extraia todos os dados com exatidão." }];
-        validBase64Images.forEach(img => {
-          contentArray.push({
-            type: "image_url",
-            image_url: { url: `data:image/png;base64,${img}`, detail: "high" }
-          });
+        const ocrRes = await axios.post('https://api.ocr.space/parse/image', form, {
+          headers: {
+            'apikey': apiKey,
+            ...form.getHeaders()
+          },
+          maxBodyLength: Infinity,
         });
 
-        const visionResponse = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          temperature: 0.1,
-          messages: [
-            { role: "system", content: "Você é um motor de OCR. Retorne apenas a transcrição pura dos dados." },
-            { role: "user", content: contentArray }
-          ],
-        });
-        combinedPageContent = visionResponse.choices[0].message.content;
-      } catch (e) {
-        console.error("❌ Erro no GPT Vision:", e.message);
-      }
-    }
-
-    if (!combinedPageContent && digitalText) combinedPageContent = digitalText;
-    if (!combinedPageContent || combinedPageContent.trim().length === 0) {
-      combinedPageContent = "Texto indisponível ou não reconhecido no documento.";
-    }
-
-    if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'fake-key') {
-      try {
-        const chunks = createChunks(combinedPageContent);
-        for (const chunkText of chunks) {
-          const embeddingRes = await openai.embeddings.create({
-            model: "text-embedding-3-small",
-            input: chunkText,
-          });
-          const vector = embeddingRes.data[0].embedding;
-          const vectorString = `[${vector.join(',')}]`;
-
-          const createdChunk = await prisma.pdfChunk.create({
-            data: { documentId: document.id, content: chunkText },
-          });
-
-          await prisma.$executeRaw`UPDATE "pdf_chunks" SET "embedding" = ${vectorString}::vector WHERE "id" = ${createdChunk.id}`;
+        // Verificação segura da estrutura de resposta do OCR.space
+        if (
+          ocrRes.data && 
+          ocrRes.data.ParsedResults && 
+          Array.isArray(ocrRes.data.ParsedResults) && 
+          ocrRes.data.ParsedResults.length > 0
+        ) {
+          const rawText = ocrRes.data.ParsedResults[0].ParsedText;
+          if (rawText && typeof rawText === 'string') {
+            extractedText = rawText.trim();
+            console.log(`✅ [OCR.space] Sucesso! Texto lido da imagem (${extractedText.length} caracteres)`);
+          }
         }
-      } catch (e) {
-        console.error("❌ Erro na geração de Embeddings:", e.message);
+
+        // Caso o OCR retorne erro interno na estrutura JSON
+        if (ocrRes.data && ocrRes.data.IsErroredOnProcessing === true) {
+          console.error('⚠️ [OCR.space] Erro interno processando imagem:', ocrRes.data.ErrorMessage);
+        }
+
+      } catch (err) {
+        console.error('⚠️ [OCR.space] Erro na requisição HTTP:', err.response?.data || err.message);
       }
     }
 
-    return Response.json({
+    // 6. Validação Final do Texto (Garante que nunca vai salvar lixo ou JSON bruto)
+    if (!extractedText || extractedText.length < 15 || extractedText.startsWith('{')) {
+      console.error('❌ [ERRO] O PDF é ilegível ou retornou formato inválido.');
+      return NextResponse.json(
+        { error: 'Não foi possível ler o conteúdo do PDF. O arquivo pode estar corrompido ou a imagem está muito ilegível.' },
+        { status: 422 }
+      );
+    }
+
+    // Limpeza extra de caracteres duplicados ou excesso de quebras de linha que atrapalham o embedding
+    extractedText = extractedText.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+
+    // 7. Banco de Dados e Embeddings (OpenAI)
+    const document = await prisma.document.create({
+      data: {
+        userId: supabaseUser.id,
+        nome_arquivo: file.name,
+        caminho_armazenamento: `/uploads/${Date.now()}_${file.name}`,
+      },
+    });
+
+    console.log('🧠 [EMBEDDINGS] Gerando vetores na OpenAI...');
+    const embeddingRes = await openai.embeddings.create({
+      model: 'text-embedding-3-small',
+      input: extractedText,
+    });
+
+    const vectorString = `[${embeddingRes.data[0].embedding.join(',')}]`;
+
+    const chunk = await prisma.pdfChunk.create({
+      data: {
+        documentId: document.id,
+        content: extractedText, // Agora armazena estritamente a string de texto limpa
+      },
+    });
+
+    await prisma.$executeRaw`
+      UPDATE "pdf_chunks"
+      SET "embedding" = ${vectorString}::vector
+      WHERE "id" = ${chunk.id}
+    `;
+
+    console.log('🎉 [SUCESSO TOTAL] Operação 100% concluída e limpa!');
+
+    return NextResponse.json({
       success: true,
-      message: 'Arquivo processado e indexado!',
-      document: { id: document.id, fileName: document.nome_arquivo, text: combinedPageContent },
+      document: { id: document.id, fileName: document.nome_arquivo, text: extractedText },
     });
 
   } catch (error) {
-    console.error('❌ Erro Geral no Upload:', error);
-    return Response.json(
-      { 
-        error: 'Erro interno no servidor', 
-        details: error.message || String(error) 
-      },
-      { status: 500 }
-    );
+    console.error('❌ Erro Fatal na Rota:', error);
+    return NextResponse.json({ error: error.message || 'Erro interno no servidor' }, { status: 500 });
   }
 }
