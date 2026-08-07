@@ -5,10 +5,10 @@ import axios from 'axios';
 import AdmZip from 'adm-zip';
 import { extractText } from 'unpdf';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'fake-key' });
 
