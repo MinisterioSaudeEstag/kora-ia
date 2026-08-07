@@ -21,6 +21,11 @@ import {
   Loader2,
   AlertCircle
 } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function Chat() {
   const [messages, setMessages] = useState([]);
@@ -108,12 +113,18 @@ export default function Chat() {
     }
   }, [messages, selectedPdf, pdfs]);
 
-  const handleDeletePdf = async (e, pdfId) => {
+ const handleDeletePdf = async (e, pdfId) => {
     e.stopPropagation();
     if (!confirm('Tem certeza que deseja apagar este documento e seu histórico de mensagens?')) return;
 
     try {
-      const token = localStorage.getItem('auth_token');
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (sessionError || !token) {
+        throw new Error('Sessão expirada. Faça login novamente.');
+      }
+
       const response = await fetch(`/api/documents?id=${pdfId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` },
