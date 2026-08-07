@@ -44,9 +44,13 @@ export async function POST(request) {
 
     let dbUser = null;
     if (supabaseUser.email) {
-      dbUser = await prisma.user.findFirst({
-        where: { email: supabaseUser.email },
-      });
+      try {
+        dbUser = await prisma.user.findFirst({
+          where: { email: supabaseUser.email },
+        });
+      } catch (e) {
+        console.warn('⚠️ Erro ao buscar usuário no Prisma:', e.message);
+      }
     }
 
     if (!dbUser) {
@@ -59,7 +63,7 @@ export async function POST(request) {
           },
         });
       } catch (userCreateErr) {
-        console.warn('Aviso ao sincronizar usuário no Prisma:', userCreateErr.message);
+        console.warn('⚠️ Aviso ao criar usuário no Prisma:', userCreateErr.message);
       }
     }
 
@@ -78,20 +82,26 @@ export async function POST(request) {
     }
 
     const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer); 
     const buffer = Buffer.from(arrayBuffer);
 
-    const document = await prisma.document.create({
-      data: {
-        userId: userIdToUse,
-        nome_arquivo: file.name,
-        caminho_armazenamento: `/uploads/documents/${Date.now()}_${file.name}`,
-      },
-    });
+    let document;
+    try {
+      document = await prisma.document.create({
+        data: {
+          userId: userIdToUse,
+          nome_arquivo: file.name,
+          caminho_armazenamento: `/uploads/documents/${Date.now()}_${file.name}`,
+        },
+      });
+    } catch (docErr) {
+      console.error('❌ Erro ao criar registro de documento no Prisma:', docErr);
+      throw new Error(`Falha no banco de dados (Prisma/Document): ${docErr.message}`);
+    }
 
     let digitalText = "";
     try {
-      const { text } = await extractText(buffer);
-      
+      const { text } = await extractText(uint8Array);
       if (text && Array.isArray(text)) {
         const fullText = text.join('\n').trim();
         if (fullText.length > 0) {
@@ -148,7 +158,7 @@ export async function POST(request) {
       }
     }
 
-    if (validBase64Images.length > 0 && process.env.OPENAI_API_KEY) {
+    if (validBase64Images.length > 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'fake-key') {
       try {
         const contentArray = [{ type: "text", text: "Realize a leitura OCR completa. Extraia todos os dados com exatidão." }];
         validBase64Images.forEach(img => {
@@ -177,7 +187,7 @@ export async function POST(request) {
       combinedPageContent = "Texto indisponível ou não reconhecido no documento.";
     }
 
-    if (process.env.OPENAI_API_KEY) {
+    if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'fake-key') {
       try {
         const chunks = createChunks(combinedPageContent);
         for (const chunkText of chunks) {
@@ -208,7 +218,10 @@ export async function POST(request) {
   } catch (error) {
     console.error('❌ Erro Geral no Upload:', error);
     return Response.json(
-      { error: 'Erro interno no servidor', details: error.message || String(error) },
+      { 
+        error: 'Erro interno no servidor', 
+        details: error.message || String(error) 
+      },
       { status: 500 }
     );
   }
