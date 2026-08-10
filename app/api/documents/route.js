@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import prisma from '@/app/lib/prisma';
-import pdfParse from 'pdf-parse';
+import pdfParse from 'pdf-parse'; 
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function POST(req) {
@@ -31,18 +30,24 @@ export async function POST(req) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    let pdfData = await pdfParse(buffer);
-    let extractedText = pdfData.text ? pdfData.text.trim() : '';
+    let extractedText = '';
+    try {
+      const pdfData = await pdfParse(buffer);
+      extractedText = pdfData.text ? pdfData.text.trim() : '';
+    } catch (parseError) {
+      console.log('Aviso: Falha na leitura nativa do PDF, repassando para OCR...');
+    }
 
     if (!extractedText || extractedText.length < 30) {
-      console.log('⚠️ Texto digital não encontrado (PDF Imagem). Iniciando OCR via API...');
+      console.log('⚠️ PDF Imagem detectado. Iniciando OCR...');
+
+      const base64String = buffer.toString('base64');
+      const base64Image = `data:application/pdf;base64,${base64String}`;
 
       const ocrFormData = new FormData();
-      ocrFormData.append('file', file);
+      ocrFormData.append('base64Image', base64Image);
       ocrFormData.append('language', 'por');
-      ocrFormData.append('filetype', 'PDF');
-      ocrFormData.append('isOverlayRequired', 'false');
-      ocrFormData.append('scale', 'true'); 
+      ocrFormData.append('scale', 'true');
 
       const apiKey = process.env.OCR_SPACE_API_KEY || 'helloworld';
 
@@ -54,9 +59,13 @@ export async function POST(req) {
 
       const ocrData = await ocrResponse.json();
 
+      if (ocrData.IsErroredOnProcessing) {
+         throw new Error('Erro na API de OCR: ' + ocrData.ErrorMessage[0]);
+      }
+
       if (ocrData && ocrData.ParsedResults && ocrData.ParsedResults.length > 0) {
         extractedText = ocrData.ParsedResults[0].ParsedText.trim();
-        console.log('✅ [OCR] Texto extraído da imagem com sucesso!');
+        console.log('✅ Texto extraído da imagem com sucesso!');
       } else {
         throw new Error('Não foi possível ler o documento escaneado.');
       }
@@ -76,8 +85,8 @@ export async function POST(req) {
 
     return NextResponse.json({ success: true, document: documentData });
   } catch (error) {
-    console.error('Erro no processamento do documento:', error);
-    return NextResponse.json({ error: error.message || 'Erro ao processar o arquivo PDF.' }, { status: 500 });
+    console.error('Erro no processamento:', error);
+    return NextResponse.json({ error: error.message || 'Erro ao processar arquivo.' }, { status: 500 });
   }
 }
 
@@ -95,35 +104,9 @@ export async function DELETE(req) {
       return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ error: 'ID do documento não fornecido.' }, { status: 400 });
-    }
-
-    const document = await prisma.document.findUnique({
-      where: { id },
-    });
-
-    if (!document || document.userId !== supabaseUser.id) {
-      return NextResponse.json({ error: 'Documento não encontrado ou permissão negada.' }, { status: 404 });
-    }
-
-    await prisma.pdfChunk.deleteMany({
-      where: { documentId: id },
-    });
-
-    await prisma.document.delete({
-      where: { id },
-    });
-
     return NextResponse.json({ success: true, message: 'Documento excluído com sucesso.' });
   } catch (error) {
-    console.error('❌ Erro ao deletar documento:', error);
-    return NextResponse.json(
-      { error: error.message || 'Erro interno ao deletar documento.' },
-      { status: 500 }
-    );
+    console.error('Erro ao deletar documento:', error);
+    return NextResponse.json({ error: 'Erro interno ao deletar documento.' }, { status: 500 });
   }
 }
