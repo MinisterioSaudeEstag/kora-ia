@@ -12,7 +12,7 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // 2. Instância do OpenAI (Embeddings)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'fake-key' });
 
-// Tempo máximo de execução permitido na Vercel (se aplicável)
+// Tempo máximo de execução permitido na Vercel
 export const maxDuration = 30;
 
 export async function POST(req) {
@@ -32,7 +32,22 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Sessão inválida ou expirada' }, { status: 401 });
     }
 
-    // --- 2. VALIDAÇÃO DO ARQUIVO PDF ---
+    // --- 2. SINCRONIZAÇÃO DO USUÁRIO NO PRISMA (Resolve o erro de contas novas) ---
+    try {
+      await prisma.user.upsert({
+        where: { id: supabaseUser.id },
+        update: {},
+        create: {
+          id: supabaseUser.id,
+          email: supabaseUser.email || 'sem-email@kora.com',
+          name: supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0] || 'Usuário Kora',
+        },
+      });
+    } catch (dbUserError) {
+      console.error('⚠️ [PRISMA USER] Erro ao sincronizar usuário:', dbUserError);
+    }
+
+    // --- 3. VALIDAÇÃO DO ARQUIVO PDF ---
     const formDataReq = await req.formData();
     const file = formDataReq.get('file');
 
@@ -45,7 +60,7 @@ export async function POST(req) {
 
     let extractedText = '';
 
-    // --- 3. EXTRAÇÃO NATIVA (PDF DIGITAL VIA PDF2JSON) ---
+    // --- 4. EXTRAÇÃO NATIVA (PDF DIGITAL VIA PDF2JSON) ---
     console.log('📄 [PDF2JSON] Tentando extrair texto digital nativo...');
     try {
       extractedText = await new Promise((resolve, reject) => {
@@ -80,9 +95,9 @@ export async function POST(req) {
       console.warn('⚠️ [PDF2JSON] O arquivo não possui texto nativo. Repassando para OCR...');
     }
 
-    // --- 4. EXTRAÇÃO FALLBACK (PDF ESCANEADO / IMAGEM VIA OCR.SPACE) ---
+    // --- 5. EXTRAÇÃO FALLBACK (PDF ESCANEADO / IMAGEM VIA OCR.SPACE) ---
     if (!extractedText) {
-      console.log('🔍 [OCR.space] PDF de imagem detectado. Executando OCR nativo em Base64...');
+      console.log('🔍 [OCR.space] PDF de imagem detectado. Executando OCR via Base64...');
 
       try {
         const base64String = fileBuffer.toString('base64');
@@ -111,12 +126,12 @@ export async function POST(req) {
         }
 
         const ocrData = await ocrRes.json();
+        console.log('🔍 [OCR.space] Resposta recebida do servidor externo.');
 
         if (ocrData.IsErroredOnProcessing) {
           const errorMessage = ocrData.ErrorMessage?.[0] || 'Erro desconhecido ao processar OCR';
           console.error('⚠️ [OCR.space] Falha interna:', errorMessage);
         } else if (ocrData?.ParsedResults && Array.isArray(ocrData.ParsedResults) && ocrData.ParsedResults.length > 0) {
-          // Concatena o texto extraído de todas as páginas do PDF
           extractedText = ocrData.ParsedResults
             .map((page) => page.ParsedText || '')
             .join('\n')
@@ -129,11 +144,11 @@ export async function POST(req) {
       }
     }
 
-    // --- 5. VALIDAÇÃO DO TEXTO EXTRAÍDO ---
+    // --- 6. VALIDAÇÃO DO TEXTO EXTRAÍDO ---
     if (!extractedText || extractedText.length < 15 || extractedText.startsWith('{')) {
       console.error('❌ [ERRO] O PDF é ilegível ou retornou conteúdo inválido.');
       return NextResponse.json(
-        { error: 'Não foi possível ler o conteúdo do PDF. O arquivo pode estar corrompido ou com imagens ilegíveis.' },
+        { error: 'Não foi possível ler o conteúdo do PDF. O arquivo pode estar corrompido, protegido ou com imagens ilegíveis.' },
         { status: 422 }
       );
     }
@@ -141,7 +156,7 @@ export async function POST(req) {
     // Sanitização e normalização de quebras de linha
     extractedText = extractedText.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
 
-    // --- 6. REGISTRO DO DOCUMENTO NO BANCO (PRISMA) ---
+    // --- 7. REGISTRO DO DOCUMENTO NO BANCO (PRISMA) ---
     const document = await prisma.document.create({
       data: {
         userId: supabaseUser.id,
@@ -150,10 +165,9 @@ export async function POST(req) {
       },
     });
 
-    // --- 7. GERAR EMBEDDINGS (OPENAI) ---
+    // --- 8. GERAR EMBEDDINGS (OPENAI) ---
     console.log('🧠 [EMBEDDINGS] Gerando vetores na OpenAI...');
 
-    // Limite de segurança para evitar erro de exceder context length na OpenAI (~8000 tokens)
     const maxCharLimit = 25000;
     const textForEmbedding = extractedText.length > maxCharLimit 
       ? extractedText.substring(0, maxCharLimit) 
@@ -166,7 +180,7 @@ export async function POST(req) {
 
     const vectorString = `[${embeddingRes.data[0].embedding.join(',')}]`;
 
-    // --- 8. SALVAR CHUNK E VETOR NO POSTGRESQL (PGVECTOR) ---
+    // --- 9. SALVAR CHUNK E VETOR NO POSTGRESQL (PGVECTOR) ---
     const chunk = await prisma.pdfChunk.create({
       data: {
         documentId: document.id,
