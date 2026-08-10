@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import prisma from '@/app/lib/prisma';
 import pdfParse from 'pdf-parse';
-import { createWorker } from 'tesseract.js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key';
@@ -36,13 +35,35 @@ export async function POST(req) {
     let extractedText = pdfData.text ? pdfData.text.trim() : '';
 
     if (!extractedText || extractedText.length < 30) {
-      console.log('⚠️ Texto digital não encontrado (PDF Imagem). Iniciando OCR...');
+      console.log('⚠️ Texto digital não encontrado (PDF Imagem). Iniciando OCR via API...');
 
-      const worker = await createWorker('por');
-      const { data: { text } } = await worker.recognize(buffer);
-      await worker.terminate();
+      const ocrFormData = new FormData();
+      ocrFormData.append('file', file);
+      ocrFormData.append('language', 'por');
+      ocrFormData.append('filetype', 'PDF');
+      ocrFormData.append('isOverlayRequired', 'false');
+      ocrFormData.append('scale', 'true'); 
 
-      extractedText = text ? text.trim() : '';
+      const apiKey = process.env.OCR_SPACE_API_KEY || 'helloworld';
+
+      const ocrResponse = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        headers: { 'apikey': apiKey },
+        body: ocrFormData,
+      });
+
+      const ocrData = await ocrResponse.json();
+
+      if (ocrData && ocrData.ParsedResults && ocrData.ParsedResults.length > 0) {
+        extractedText = ocrData.ParsedResults[0].ParsedText.trim();
+        console.log('✅ [OCR] Texto extraído da imagem com sucesso!');
+      } else {
+        throw new Error('Não foi possível ler o documento escaneado.');
+      }
+    }
+
+    if (!extractedText || extractedText.length < 10) {
+      return NextResponse.json({ error: 'O PDF está ilegível ou vazio.' }, { status: 422 });
     }
 
     const documentData = {
