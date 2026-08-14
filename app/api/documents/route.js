@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import pdfParse from 'pdf-parse'; 
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -29,6 +28,8 @@ export async function POST(req) {
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
+    const pdfParse = (await import('pdf-parse')).default;
 
     let extractedText = '';
     try {
@@ -102,6 +103,13 @@ export async function DELETE(req) {
 
     if (authError || !supabaseUser) {
       return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID do documento não fornecido.' }, { status: 400 });
     }
 
     return NextResponse.json({ success: true, message: 'Documento excluído com sucesso.' });
