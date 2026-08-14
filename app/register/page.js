@@ -103,7 +103,7 @@ export default function Register() {
       }
 
       if (data?.user) {
-        const { error: profileError } = await supabase.from('profiles').insert([
+        const { error: profileError } = await supabase.from('users').insert([
           {
             id: data.user.id,
             full_name: formData.name,
