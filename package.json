@@ -39,6 +39,7 @@
     "unpdf": "^1.8.0"
   },
   "devDependencies": {
+    "@prisma/config": "^7.9.1",
     "@tailwindcss/postcss": "^4",
     "autoprefixer": "^10.5.0",
     "babel-plugin-react-compiler": "1.0.0",
