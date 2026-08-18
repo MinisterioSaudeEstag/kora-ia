@@ -1,4 +1,3 @@
-// app/api/kora/save-pdf-text/route.js
 import { NextResponse } from 'next/server';
 import { verifyToken } from '@/app/lib/auth-utils-prisma';
 import prisma from '@/app/lib/prisma';
@@ -17,11 +16,9 @@ export async function POST(request) {
     const { documentId, text } = await request.json();
     if (!documentId || !text) return NextResponse.json({ error: 'Dados incompletos' }, { status: 400 });
 
-    // 1. CHUNKING: Divide o texto em pedaços de ~1000 caracteres
-    // Isso evita que a IA se perca e resolve o problema de limite de tokens
     const chunks = [];
     const chunkSize = 1000;
-    const overlap = 200; // Sobreposição para não cortar frases ao meio
+    const overlap = 200; 
 
     for (let i = 0; i < text.length; i += (chunkSize - overlap)) {
       chunks.push(text.substring(i, i + chunkSize));
@@ -29,7 +26,6 @@ export async function POST(request) {
 
     console.log(`Processando ${chunks.length} fragmentos do PDF...`);
 
-    // 2. EMBEDDINGS: Transforma cada pedaço de texto em um vetor matemático
     const embeddingsResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: chunks,
@@ -37,8 +33,6 @@ export async function POST(request) {
 
     const embeddings = embeddingsResponse.data;
 
-    // 3. SALVAMENTO NO SUPABASE (Usando SQL Raw para suportar o tipo vector)
-    // Como o Prisma não suporta o tipo 'vector' nativamente, usamos $executeRaw
     for (let i = 0; i < chunks.length; i++) {
       const vector = `[${embeddings[i].embedding.join(',')}]`;
       const content = chunks[i];

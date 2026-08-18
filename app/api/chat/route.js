@@ -18,7 +18,6 @@ export async function POST(request) {
     const queryVector = await embeddingsModel.embedQuery(message);
     const vectorString = `[${queryVector.join(',')}]`;
 
-    // CORREÇÃO AQUI: prisma.$queryRaw retorna o array diretamente, não um objeto { rows }
     const rows = await prisma.$queryRaw`
       SELECT content 
       FROM "pdf_chunks" 
@@ -27,7 +26,6 @@ export async function POST(request) {
       LIMIT 5
     `;
 
-    // Agora rows é o array correto
     if (!rows || rows.length === 0) {
       return NextResponse.json({ 
         answer: 'Não consegui encontrar trechos relevantes neste documento para responder à sua pergunta.' 
@@ -41,7 +39,7 @@ export async function POST(request) {
     ${context}`;
 
     const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-versatile",
+      model: "llama-3.3-70b-versatile",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: message }
